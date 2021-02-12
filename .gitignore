@@ -1,0 +1,6 @@
+build/
+.vs/
+
+thread_pool.vcxproj.filters
+
+thread_pool.vcxproj.user
