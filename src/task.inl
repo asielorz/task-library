@@ -13,9 +13,9 @@ auto continuation(F f, TaskExecutor & executor, Args && ... args)
 	using first_param = first_parameter_type_t<F>;
 	using result = std::invoke_result_t<F, first_param, Args...>;
 
-	auto bound = [f_ = std::move(f), ...args_ = std::forward<Args>(args)](first_param const & x) mutable
+	auto bound = [f_ = std::move(f), ...args_ = std::forward<Args>(args)](first_param x) mutable
 	{
-		return std::invoke(std::move(f_), x, std::move(args_)...);
+		return std::invoke(std::move(f_), std::move(x), std::move(args_)...);
 	};
 	using bound_t = decltype(bound);
 	

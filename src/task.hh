@@ -24,37 +24,72 @@ concept is_continuation = std::invocable<F, T>;
 template <typename F, typename Prev>
 concept is_continuation_for = is_continuation<F, result_type<Prev>>;
 
+struct return_result_t {};
+constexpr return_result_t return_result;
+
+template <typename F>
+concept is_continuable = std::move_constructible<F> && std::invocable<F, return_result_t>;
+
+template <is_continuable T>
+using continuable_result_type = std::invoke_result_t<T, return_result_t>;
+
+template <is_continuable F, is_continuation<continuable_result_type<F>> C>
+struct PackagedTaskWithContinuation
+{
+	explicit PackagedTaskWithContinuation(F f, C c) noexcept : function(std::move(f)), continuation_function(std::move(c)) {}
+
+	using result_type = continuable_result_type<F>;
+
+	auto operator () () -> void
+	{
+		auto result = std::invoke(std::move(function), return_result);
+		std::invoke(std::move(continuation_function), std::move(result));
+	}
+
+	auto operator () (return_result_t) -> result_type
+	{
+		auto result = std::invoke(std::move(function), return_result);
+		std::invoke(std::move(continuation_function), result);
+		return result;
+	}
+
+	template <is_continuation<result_type> C2>
+	[[nodiscard]] auto then(C2 c) const & -> PackagedTaskWithContinuation<PackagedTaskWithContinuation<F, C>, C2>
+	{
+		return PackagedTaskWithContinuation<PackagedTaskWithContinuation<F, C>, C2>(*this, std::move(c));
+	}
+
+	template <is_continuation<result_type> C2>
+	[[nodiscard]] auto then(C2 c) && -> PackagedTaskWithContinuation<PackagedTaskWithContinuation<F, C>, C2>
+	{
+		return PackagedTaskWithContinuation<PackagedTaskWithContinuation<F, C>, C2>(std::move(*this), std::move(c));
+	}
+
+private:
+	F function;
+	C continuation_function;
+};
+
 template <is_task F>
 struct PackagedTask
 {
 	explicit PackagedTask(F f) noexcept : function(std::move(f)) {}
 
-	using result_type = std::invoke_result_t<F>;
+	using result_type = task_result_type<F>;
 
 	auto operator () () -> result_type { return std::invoke(std::move(function)); }
+	auto operator () (return_result_t) -> result_type { return std::invoke(std::move(function)); }
 
 	template <is_continuation<result_type> C>
 	[[nodiscard]] auto then(C c) const &
 	{
-		auto with_continuation = [f_ = function, c_ = std::move(c)]() mutable
-		{
-			auto result = std::invoke(std::move(f_));
-			std::invoke(std::move(c_), result);
-			return result;
-		};
-		return PackagedTask<decltype(with_continuation)>(std::move(with_continuation));
+		return PackagedTaskWithContinuation<PackagedTask<F>, C>(*this, std::move(c));
 	}
 
 	template <is_continuation<result_type> C>
 	[[nodiscard]] auto then(C c) &&
 	{
-		auto with_continuation = [f_ = std::move(function), c_ = std::move(c)]() mutable
-		{
-			auto result = std::invoke(std::move(f_));
-			std::invoke(std::move(c_), result);
-			return result;
-		};
-		return PackagedTask<decltype(with_continuation)>(std::move(with_continuation));
+		return PackagedTaskWithContinuation<PackagedTask<F>, C>(std::move(*this), std::move(c));
 	}
 
 private:
@@ -72,14 +107,14 @@ struct ScheduledContinuation
 	using argument_type = Arg;
 	using result_type = Result;
 
-	auto operator () (Arg const & arg) -> void { executor->run_task(task(std::move(function), arg)); }
+	auto operator () (Arg arg) -> void { executor->run_task(task(std::move(function), std::move(arg))); }
 
 	template <is_continuation<result_type> C>
 	[[nodiscard]] auto then(C c) const &
 	{
-		auto with_continuation = [f_ = function, c_ = std::move(c)](argument_type const & arg) mutable
+		auto with_continuation = [f_ = function, c_ = std::move(c)](argument_type arg) mutable
 		{
-			auto result = std::invoke(std::move(f_), arg);
+			auto result = std::invoke(std::move(f_), std::move(arg));
 			std::invoke(std::move(c_), result);
 			return result;
 		};
@@ -91,9 +126,9 @@ struct ScheduledContinuation
 	template <is_continuation<result_type> C>
 	[[nodiscard]] auto then(C c) &&
 	{
-		auto with_continuation = [f_ = std::move(function), c_ = std::move(c)](argument_type const & arg) mutable
+		auto with_continuation = [f_ = std::move(function), c_ = std::move(c)](argument_type arg) mutable
 		{
-			auto result = std::invoke(std::move(f_), arg);
+			auto result = std::invoke(std::move(f_), std::move(arg));
 			std::invoke(std::move(c_), result);
 			return result;
 		};

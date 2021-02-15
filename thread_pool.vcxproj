@@ -156,6 +156,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cc" />
+    <ClCompile Include="src\tests.cc" />
     <ClCompile Include="src\polymorphic_task.cc" />
     <ClCompile Include="src\thread_pool.cc" />
   </ItemGroup>

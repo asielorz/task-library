@@ -176,7 +176,7 @@ auto WorkerThread::join() -> void
 	}
 }
 
-auto work(bool & stop_token, bool & work_source_changed, WorkerThread::WorkSource const & work_source)
+auto work(bool & stop_token, bool & work_source_changed, WorkerThread::WorkSource const & work_source) -> void
 {
 	while (!work_source_changed)
 	{
