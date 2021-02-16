@@ -27,42 +27,43 @@ concept is_continuation_for = is_continuation<F, result_type<Prev>>;
 struct return_result_t {};
 constexpr return_result_t return_result;
 
-template <typename F>
-concept is_continuable = std::move_constructible<F> && std::invocable<F, return_result_t>;
+template <typename F, typename ... Args>
+concept is_continuable = std::move_constructible<F> && std::invocable<F, Args..., return_result_t>;
 
-template <is_continuable T>
-using continuable_result_type = std::invoke_result_t<T, return_result_t>;
+template <typename T, typename ... Args> requires(is_continuable<T, Args...>)
+using continuable_result_type = std::invoke_result_t<T, Args..., return_result_t>;
 
-template <is_continuable F, is_continuation<continuable_result_type<F>> C>
-struct PackagedTaskWithContinuation
+template <typename F, typename C, typename ... Args>
+	requires(is_continuable<F, Args...> && is_continuation<C, continuable_result_type<F, Args...>>)
+struct FunctionWithContinuation
 {
-	explicit PackagedTaskWithContinuation(F f, C c) noexcept : function(std::move(f)), continuation_function(std::move(c)) {}
+	explicit FunctionWithContinuation(F f, C c) noexcept : function(std::move(f)), continuation_function(std::move(c)) {}
 
-	using result_type = continuable_result_type<F>;
+	using result_type = continuable_result_type<F, Args...>;
 
-	auto operator () () -> void
+	auto operator () (Args ... args) -> void
 	{
-		auto result = std::invoke(std::move(function), return_result);
+		auto result = std::invoke(std::move(function), std::forward<Args>(args)..., return_result);
 		std::invoke(std::move(continuation_function), std::move(result));
 	}
 
-	auto operator () (return_result_t) -> result_type
+	[[nodiscard]] auto operator () (Args ... args, return_result_t) -> result_type
 	{
-		auto result = std::invoke(std::move(function), return_result);
+		auto result = std::invoke(std::move(function), std::forward<Args>(args)..., return_result);
 		std::invoke(std::move(continuation_function), result);
 		return result;
 	}
 
 	template <is_continuation<result_type> C2>
-	[[nodiscard]] auto then(C2 c) const & -> PackagedTaskWithContinuation<PackagedTaskWithContinuation<F, C>, C2>
+	[[nodiscard]] auto then(C2 c) const & -> FunctionWithContinuation<FunctionWithContinuation<F, C, Args...>, C2, Args...>
 	{
-		return PackagedTaskWithContinuation<PackagedTaskWithContinuation<F, C>, C2>(*this, std::move(c));
+		return FunctionWithContinuation<FunctionWithContinuation<F, C, Args...>, C2, Args...>(*this, std::move(c));
 	}
 
 	template <is_continuation<result_type> C2>
-	[[nodiscard]] auto then(C2 c) && -> PackagedTaskWithContinuation<PackagedTaskWithContinuation<F, C>, C2>
+	[[nodiscard]] auto then(C2 c) && noexcept -> FunctionWithContinuation<FunctionWithContinuation<F, C, Args...>, C2, Args...>
 	{
-		return PackagedTaskWithContinuation<PackagedTaskWithContinuation<F, C>, C2>(std::move(*this), std::move(c));
+		return FunctionWithContinuation<FunctionWithContinuation<F, C, Args...>, C2, Args...>(std::move(*this), std::move(c));
 	}
 
 private:
@@ -70,26 +71,27 @@ private:
 	C continuation_function;
 };
 
-template <is_task F>
-struct PackagedTask
+template <std::move_constructible F, typename ... Args>
+	requires(std::invocable<F, Args...>)
+struct Continuable
 {
-	explicit PackagedTask(F f) noexcept : function(std::move(f)) {}
+	explicit Continuable(F f) noexcept : function(std::move(f)) {}
 
-	using result_type = task_result_type<F>;
+	using result_type = std::invoke_result_t<F, Args...>;
 
-	auto operator () () -> result_type { return std::invoke(std::move(function)); }
-	auto operator () (return_result_t) -> result_type { return std::invoke(std::move(function)); }
+	auto operator () (Args ... args) -> result_type { return std::invoke(std::move(function), std::forward<Args>(args)...); }
+	[[nodiscard]] auto operator () (Args ... args, return_result_t) -> result_type { return std::invoke(std::move(function), std::forward<Args>(args)...); }
 
 	template <is_continuation<result_type> C>
-	[[nodiscard]] auto then(C c) const &
+	[[nodiscard]] auto then(C c) const & -> FunctionWithContinuation<Continuable<F, Args...>, C, Args...>
 	{
-		return PackagedTaskWithContinuation<PackagedTask<F>, C>(*this, std::move(c));
+		return FunctionWithContinuation<Continuable<F, Args...>, C, Args...>(*this, std::move(c));
 	}
 
 	template <is_continuation<result_type> C>
-	[[nodiscard]] auto then(C c) &&
+	[[nodiscard]] auto then(C c) && noexcept -> FunctionWithContinuation<Continuable<F, Args...>, C, Args...>
 	{
-		return PackagedTaskWithContinuation<PackagedTask<F>, C>(std::move(*this), std::move(c));
+		return FunctionWithContinuation<Continuable<F, Args...>, C, Args...>(std::move(*this), std::move(c));
 	}
 
 private:
@@ -112,29 +114,23 @@ struct ScheduledContinuation
 	template <is_continuation<result_type> C>
 	[[nodiscard]] auto then(C c) const &
 	{
-		auto with_continuation = [f_ = function, c_ = std::move(c)](argument_type arg) mutable
-		{
-			auto result = std::invoke(std::move(f_), std::move(arg));
-			std::invoke(std::move(c_), result);
-			return result;
-		};
-		using new_function_t = decltype(with_continuation);
-
-		return ScheduledContinuation<TaskExecutor, argument_type, result_type, new_function_t>(executor, std::move(with_continuation));
+		auto with_continuation = function.then(std::move(c));
+		using continuation_t = decltype(with_continuation);
+		return ScheduledContinuation<TaskExecutor, argument_type, result_type, continuation_t>(
+			executor,
+			std::move(with_continuation)
+		);
 	}
 
 	template <is_continuation<result_type> C>
-	[[nodiscard]] auto then(C c) &&
+	[[nodiscard]] auto then(C c) && noexcept
 	{
-		auto with_continuation = [f_ = std::move(function), c_ = std::move(c)](argument_type arg) mutable
-		{
-			auto result = std::invoke(std::move(f_), std::move(arg));
-			std::invoke(std::move(c_), result);
-			return result;
-		};
-		using new_function_t = decltype(with_continuation);
-
-		return ScheduledContinuation<TaskExecutor, argument_type, result_type, new_function_t>(executor, std::move(with_continuation));
+		auto with_continuation = std::move(function).then(std::move(c));
+		using continuation_t = decltype(with_continuation);
+		return ScheduledContinuation<TaskExecutor, argument_type, result_type, continuation_t>(
+			executor,
+			std::move(with_continuation)
+		);
 	}
 
 private:

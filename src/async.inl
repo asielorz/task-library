@@ -10,7 +10,7 @@ auto store_in(std::future<T> & future)
 }
 
 template <is_task_executor TaskExecutor, is_task T>
-auto async(TaskExecutor & executor, PackagedTask<T> t) -> std::future<task_result_type<T>>
+auto async(TaskExecutor & executor, Continuable<T> t) -> std::future<task_result_type<T>>
 {
 	std::future<task_result_type<T>> future;
 	executor.run_task(std::move(t).then(store_in(future)));

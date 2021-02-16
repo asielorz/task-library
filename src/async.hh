@@ -10,7 +10,7 @@ auto store_in(std::future<T> & future);
 
 // Launches a task in an executor and returns a future that will hold the result of the task.
 template <is_task_executor TaskExecutor, is_task T>
-auto async(TaskExecutor & executor, PackagedTask<T> t) -> std::future<task_result_type<T>>;
+auto async(TaskExecutor & executor, Continuable<T> t) -> std::future<task_result_type<T>>;
 
 template <typename T>
 auto is_ready(std::future<T> const & future) -> bool;

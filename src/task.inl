@@ -1,7 +1,7 @@
 template <typename F, typename ... Args> requires std::invocable<F, Args...>
 auto task(F && f, Args && ... args)
 {
-	return PackagedTask([f_ = std::forward<F>(f), ...args_ = std::forward<Args>(args)]() mutable
+	return Continuable([f_ = std::forward<F>(f), ...args_ = std::forward<Args>(args)]() mutable
 	{
 		return std::invoke(std::move(f_), std::move(args_)...);
 	});
@@ -18,8 +18,10 @@ auto continuation(F f, TaskExecutor & executor, Args && ... args)
 		return std::invoke(std::move(f_), std::move(x), std::move(args_)...);
 	};
 	using bound_t = decltype(bound);
+	using packaged_task_t = Continuable<bound_t, first_param>;
 	
-	return ScheduledContinuation<TaskExecutor, first_param, result, bound_t>(std::addressof(executor), std::move(bound));
+	//return ScheduledContinuation<TaskExecutor, first_param, result, bound_t>(std::addressof(executor), std::move(bound));
+	return ScheduledContinuation<TaskExecutor, first_param, result, packaged_task_t>(std::addressof(executor), packaged_task_t(std::move(bound)));
 }
 
 template <typename A, typename B>

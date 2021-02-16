@@ -342,3 +342,22 @@ TEST_CASE("With multiple continuations last one moves")
 	REQUIRE(j == 6);
 	REQUIRE(k == 4);
 }
+
+TEST_CASE("Can pass a move only type to a continuation of a continuation as long as there is only one continuation")
+{
+	auto task_queue = TaskQueue(1);
+
+	int i = 0;
+	auto t = task([]() { return 5; })
+		.then(continuation([](int i) { return std::make_unique<int>(i); }, task_queue)
+			.then(continuation([&i](std::unique_ptr<int> p) { i = *p; }, task_queue))
+		);
+
+	task_queue.push_task(std::move(t));
+
+	REQUIRE(i == 0);
+
+	this_thread::work_until_no_tasks_left_for(task_queue);
+
+	REQUIRE(i == 5);
+}
