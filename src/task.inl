@@ -20,7 +20,6 @@ auto continuation(F f, TaskExecutor & executor, Args && ... args)
 	using bound_t = decltype(bound);
 	using packaged_task_t = Continuable<bound_t, first_param>;
 	
-	//return ScheduledContinuation<TaskExecutor, first_param, result, bound_t>(std::addressof(executor), std::move(bound));
 	return ScheduledContinuation<TaskExecutor, first_param, result, packaged_task_t>(std::addressof(executor), packaged_task_t(std::move(bound)));
 }
 
