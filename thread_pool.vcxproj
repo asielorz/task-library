@@ -156,6 +156,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cc" />
+    <ClCompile Include="src\profiler.cc" />
     <ClCompile Include="src\tests.cc" />
     <ClCompile Include="src\polymorphic_task.cc" />
     <ClCompile Include="src\thread_pool.cc" />
@@ -165,6 +166,7 @@
     <ClInclude Include="src\catch\catch.hpp" />
     <ClInclude Include="src\function_traits.hh" />
     <ClInclude Include="src\polymorphic_task.hh" />
+    <ClInclude Include="src\profiler.hh" />
     <ClInclude Include="src\task.hh" />
     <ClInclude Include="src\thread_pool.hh" />
     <ClInclude Include="src\when_all.hh" />

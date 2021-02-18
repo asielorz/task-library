@@ -1,9 +1,14 @@
 #include "profiler.hh"
 #include <cassert>
 
-uint16_t push_node(std::vector<TaskProfile::Node> & nodes, std::string_view name)
+uint16_t push_node(std::vector<TaskProfile::Node> & nodes, std::string_view name, uint16_t parent)
 {
 	auto index = static_cast<uint16_t>(nodes.size());
+	nodes.push_back(TaskProfile::Node{
+		.name = name,
+		.time_start = std::chrono::steady_clock::now().time_since_epoch(),
+		.parent = parent
+	});
 }
 
 void Profiler::start_main_task(std::string_view name, uint32_t id)
