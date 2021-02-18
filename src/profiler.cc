@@ -41,3 +41,43 @@ void Profiler::pop()
 {
 
 }
+
+template <template<typename> typename Allocator, size_t MaxIDLength, size_t DefaultInitialCapacity>
+void basic_profiler<Allocator, MaxIDLength, DefaultInitialCapacity>::push(id_t id)
+{
+	if (curr != null_index && (ids_equal(id, tree[curr].id.data())))
+	{
+		tree[curr].recursive_calls++;
+	}
+	else
+	{
+		tree.emplace_back();
+		curr_pops = 0;
+		Node & new_node = tree.back();
+		if (curr != null_index)
+			add_child(tree[curr], new_node);
+		curr = index_of(new_node);
+		const auto id_len = std::min(id.size(), size_t(max_id_length));
+		memcpy(new_node.id.data(), id.data(), id_len);
+		new_node.id[id_len] = 0;
+		new_node.cpu_cycles = start_measure();
+	}
+}
+
+template <template<typename> typename Allocator, size_t MaxIDLength, size_t DefaultInitialCapacity>
+auto basic_profiler<Allocator, MaxIDLength, DefaultInitialCapacity>::pop(id_t id) -> cpu_time_t
+{
+	const cpu_time_t delta_t = end_measure() - tree[curr].cpu_cycles;
+	assert(ids_equal(id, tree[curr].id.data()));
+	static_cast<void>(id); // For the unused parameter warning in release
+
+	curr_pops++;
+	if (curr_pops == tree[curr].recursive_calls)
+	{
+		tree[curr].cpu_cycles = delta_t;
+		curr = tree[curr].parent;
+		curr_pops = 0;
+	}
+
+	return delta_t;
+}
