@@ -40,4 +40,31 @@ auto sub_task(std::string_view name, F && f, Args && ... args)
 	});
 }
 
+template <typename F, is_task_executor TaskExecutor, typename ... Args>
+auto main_continuation(std::string_view name, F f, TaskExecutor & executor, Args && ... args)
+{
+	using first_param = first_parameter_type_t<F>;
+
+	auto bound = [name_ = name, f_ = std::move(f), ...args_ = std::forward<Args>(args)](first_param x) mutable
+	{
+		auto const g = ProfileScopeAsTask(name_);
+		return std::invoke(std::move(f_), std::move(x), std::move(args_)...);
+	};
+	return continuation(std::move(bound), executor);
+}
+
+template <typename F, is_task_executor TaskExecutor, typename ... Args>
+auto sub_continuation(std::string_view name, F f, TaskExecutor & executor, Args && ... args)
+{
+	using first_param = first_parameter_type_t<F>;
+
+	auto bound = [name_ = name, parent_id = global_profiler::current_task_id(), f_ = std::move(f), ...args_ = std::forward<Args>(args)](first_param x) mutable
+	{
+		auto const g = ProfileScopeAsTask(name_, parent_id);
+		return std::invoke(std::move(f_), std::move(x), std::move(args_)...);
+	};
+	return continuation(std::move(bound), executor);
+}
+
+
 #endif // ENABLE_GLOBAL_PROFILER

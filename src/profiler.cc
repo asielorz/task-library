@@ -277,6 +277,10 @@ ProfileScope::~ProfileScope()
 ProfileScopeAsTask::ProfileScopeAsTask(std::string_view name)
 	: ProfileScopeAsTask(global_profiler::instance(), name)
 {}
+
+ProfileScopeAsTask::ProfileScopeAsTask(std::string_view name, std::string_view parent_id)
+	: ProfileScopeAsTask(global_profiler::instance(), name, parent_id)
+{}
 #endif
 
 ProfileScopeAsTask::ProfileScopeAsTask(Profiler & profiler_, std::string_view name)

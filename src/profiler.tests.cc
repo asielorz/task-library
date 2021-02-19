@@ -1,3 +1,4 @@
+#include "thread_pool.hh"
 #include "profiler.hh"
 #include "catch/catch.hpp"
 #include <sstream>
@@ -193,6 +194,113 @@ TEST_CASE("is_profiling returns true if the profiler is in the middle of a task"
 	
 	REQUIRE(!profiler.is_profiling());
 }
+
+#if ENABLE_GLOBAL_PROFILER
+TEST_CASE("main_task creates a task that is profiled automatically")
+{
+	auto task_queue = TaskQueue(1);
+
+	int i = 0;
+	task_queue.push_task(main_task("Test task", [&i]() { i = 5; }));
+
+	REQUIRE(i == 0); // task hasn't run yet
+
+	this_thread::work_until_no_tasks_left_for(task_queue);
+
+	REQUIRE(i == 5); // task has run now
+
+	auto profiles = global_profiler::get_finished_profiles();
+
+	REQUIRE(profiles.size() == 1);
+	REQUIRE(profiles[0].id() == "Test task");
+	REQUIRE(profiles[0].parent_id == TaskProfile::no_parent_id);
+	REQUIRE(profiles[0].nodes.size() == 1);
+	REQUIRE(profiles[0].nodes[0].name == "Test task");
+	REQUIRE(profiles[0].nodes[0].time_end > profiles[0].nodes[0].time_start);
+	REQUIRE(profiles[0].nodes[0].first_child == TaskProfile::invalid_node_index);
+	REQUIRE(profiles[0].nodes[0].next_sibling == TaskProfile::invalid_node_index);
+}
+
+TEST_CASE("main_continuation creates a continuation that is profiled automatically")
+{
+	auto task_queue = TaskQueue(1);
+
+	int i = 0;
+	auto t = main_task("Test task", []() { return 5; })
+		.then(main_continuation("Test continuation", [&i](int x) { i = x; }, task_queue));
+
+	task_queue.push_task(std::move(t));
+
+	REQUIRE(i == 0); // task hasn't run yet
+
+	this_thread::work_until_no_tasks_left_for(task_queue);
+
+	REQUIRE(i == 5); // task has run now
+
+	auto profiles = global_profiler::get_finished_profiles();
+
+	REQUIRE(profiles.size() == 2);
+	REQUIRE(profiles[0].id() == "Test task");
+	REQUIRE(profiles[0].parent_id == TaskProfile::no_parent_id);
+	REQUIRE(profiles[1].id() == "Test continuation");
+	REQUIRE(profiles[1].parent_id == TaskProfile::no_parent_id);
+}
+
+TEST_CASE("sub_task creates a task that is automatically profiled and that has as a parent the task active when calling sub_task")
+{
+	auto task_queue = TaskQueue(1);
+
+	int i = 0;
+	{
+		auto const g = ProfileScopeAsTask("Main task");
+		task_queue.push_task(sub_task("Sub task", [&i]() { i = 5; }));
+	}
+
+	REQUIRE(i == 0); // task hasn't run yet
+
+	this_thread::work_until_no_tasks_left_for(task_queue);
+
+	REQUIRE(i == 5); // task has run now
+
+	auto profiles = global_profiler::get_finished_profiles();
+
+	REQUIRE(profiles.size() == 2);
+	REQUIRE(profiles[0].id() == "Main task");
+	REQUIRE(profiles[0].parent_id == TaskProfile::no_parent_id);
+	REQUIRE(profiles[1].id() == "Sub task");
+	REQUIRE(profiles[1].parent_id == "Main task");
+}
+
+TEST_CASE("sub_continuation creates a continuation that is automatically profiled and that has as a parent the task active when calling sub_continuation")
+{
+	auto task_queue = TaskQueue(1);
+
+	int i = 0;
+	{
+		auto const g = ProfileScopeAsTask("Main task");
+		auto t = sub_task("Sub task", []() { return 5; })
+			.then(sub_continuation("Sub continuation", [&i](int x) { i = x; }, task_queue));
+
+		task_queue.push_task(std::move(t));
+	}
+
+	REQUIRE(i == 0); // task hasn't run yet
+
+	this_thread::work_until_no_tasks_left_for(task_queue);
+
+	REQUIRE(i == 5); // task has run now
+
+	auto profiles = global_profiler::get_finished_profiles();
+
+	REQUIRE(profiles.size() == 3);
+	REQUIRE(profiles[0].id() == "Main task");
+	REQUIRE(profiles[0].parent_id == TaskProfile::no_parent_id);
+	REQUIRE(profiles[1].id() == "Sub task");
+	REQUIRE(profiles[1].parent_id == "Main task");
+	REQUIRE(profiles[2].id() == "Sub continuation");
+	REQUIRE(profiles[2].parent_id == "Main task");
+}
+#endif // ENABLE_GLOBAL_PROFILER
 
 #if 0
 void node_traversal_algorithms_that_should_be_turned_into_iterators_at_some_point()

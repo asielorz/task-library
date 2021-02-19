@@ -102,6 +102,7 @@ struct ProfileScopeAsTask
 {
 	#if ENABLE_GLOBAL_PROFILER
 		explicit ProfileScopeAsTask(std::string_view name);
+		explicit ProfileScopeAsTask(std::string_view name, std::string_view parent_id);
 	#endif
 
 	explicit ProfileScopeAsTask(Profiler & profiler_, std::string_view name);
@@ -140,6 +141,12 @@ auto main_task(std::string_view name, F && f, Args && ... args);
 
 template <typename F, typename ... Args> requires std::invocable<F, Args...>
 auto sub_task(std::string_view name, F && f, Args && ... args);
+
+template <typename F, is_task_executor TaskExecutor, typename ... Args>
+auto main_continuation(std::string_view name, F f, TaskExecutor & executor, Args && ... args);
+
+template <typename F, is_task_executor TaskExecutor, typename ... Args>
+auto sub_continuation(std::string_view name, F f, TaskExecutor & executor, Args && ... args);
 
 #endif // ENABLE_GLOBAL_PROFILER
 
