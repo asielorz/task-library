@@ -27,7 +27,7 @@ struct ProfileInDiskHeader
 	uint32_t node_count;
 };
 
-StringInDisk record_string(std::vector<char> strings, std::string_view str, std::map<std::string_view, StringInDisk> & already_recorded_strings)
+StringInDisk record_string(std::vector<char> & strings, std::string_view str, std::map<std::string_view, StringInDisk> & already_recorded_strings)
 {
 	if (str.empty())
 		return {0, 0};
@@ -96,6 +96,39 @@ void save_profiles(
 	}
 }
 
+struct ProfilesAndStringsHeader
+{
+	static constexpr std::array<char, 8> correct_header_identifier = { 'P', 'R', 'O', 'F', ' ', 'S', 'T', 'R' };
+	std::array<char, 8> header_identifier;
+	uint32_t strings_pos;
+	uint32_t strings_size;
+};
+
+void save_profiles_and_strings(std::span<TaskProfile const> profiles, std::ostream & out)
+{
+	std::vector<char> strings;
+	std::map<std::string_view, StringInDisk> already_recorded_strings;
+
+	{
+		// Write dummy data because seekp outside of the written area doesn't work on some streams.
+		// This will be properly written later.
+		ProfilesAndStringsHeader dummy_header;
+		out.write(reinterpret_cast<char const *>(&dummy_header), sizeof(ProfilesAndStringsHeader));
+	}
+
+	save_profiles(profiles, out, strings, already_recorded_strings);
+
+	ProfilesAndStringsHeader const header = {
+		.header_identifier = ProfilesAndStringsHeader::correct_header_identifier,
+		.strings_pos = static_cast<uint32_t>(out.tellp()),
+		.strings_size = static_cast<uint32_t>(strings.size())
+	};
+
+	out.write(strings.data(), strings.size());
+	out.seekp(0);
+	out.write(reinterpret_cast<char const *>(&header), sizeof(ProfilesAndStringsHeader));
+}
+
 std::vector<TaskProfile> load_profiles(std::istream & in, std::span<char const> strings)
 {
 	std::vector<TaskProfile> profiles;
@@ -140,6 +173,25 @@ std::vector<TaskProfile> load_profiles(std::istream & in, std::span<char const> 
 	return profiles;
 }
 
+std::pair<std::vector<TaskProfile>, std::vector<char>> load_profiles_and_strings(std::istream & in)
+{
+	std::vector<char> strings;
+
+	ProfilesAndStringsHeader header;
+	in.read(reinterpret_cast<char *>(&header), sizeof(ProfilesAndStringsHeader));
+	if (header.header_identifier != ProfilesAndStringsHeader::correct_header_identifier)
+		return {};
+
+	in.seekg(header.strings_pos);
+	strings.resize(header.strings_size);
+	in.read(strings.data(), strings.size());
+
+	in.seekg(sizeof(ProfilesAndStringsHeader));
+	std::vector<TaskProfile> profiles = load_profiles(in, strings);
+
+	return {std::move(profiles), std::move(strings)};
+}
+
 uint16_t push_node(std::vector<TaskProfile::Node> & nodes, std::string_view name, uint16_t parent)
 {
 	auto index = static_cast<uint16_t>(nodes.size());
@@ -151,53 +203,49 @@ uint16_t push_node(std::vector<TaskProfile::Node> & nodes, std::string_view name
 	return index;
 }
 
-void add_child(std::vector<TaskProfile::Node> & nodes, uint16_t parent, uint16_t child)
+void add_child(std::vector<TaskProfile::Node> & nodes, uint16_t parent, uint16_t insertion_point, uint16_t child)
 {
-	TaskProfile::Node & parent_node = nodes[parent];
-	if (parent_node.first_child == TaskProfile::invalid_node_index)
-	{
-		parent_node.first_child = child;
-		return;
-	}
-
-	TaskProfile::Node * last_child = &nodes[parent_node.first_child];
-	while (last_child->next_sibling != TaskProfile::invalid_node_index)
-		last_child = &nodes[last_child->next_sibling];
-
-	last_child->next_sibling = child;
+	TaskProfile::Node & insertion_point_node = nodes[insertion_point];
+	if (parent == insertion_point)
+		insertion_point_node.first_child = child;
+	else
+		insertion_point_node.next_sibling = child;
 }
 
 void Profiler::start_main_task(std::string_view name)
 {
-	assert(current_node == TaskProfile::invalid_node_index);
 	start_sub_task(name, TaskProfile::no_parent_id);
 }
 
 void Profiler::start_sub_task(std::string_view name, std::string_view parent_id)
 {
-	assert(current_node == TaskProfile::invalid_node_index);
+	assert(!is_profiling());
 	current_profile.parent_id = parent_id;
 	current_profile.nodes.reserve(64);
 	current_node = push_node(current_profile.nodes, name, TaskProfile::invalid_node_index);
+	current_insertion_point = current_node;
 }
 
 void Profiler::end_task()
 {
 	pop();
-	assert(current_node == TaskProfile::invalid_node_index);
+	assert(!is_profiling());
 	auto const g = std::lock_guard(finished_profiles_mutex);
 	finished_profiles.push_back(std::move(current_profile));
 }
 
 void Profiler::push(std::string_view name)
 {
+	assert(is_profiling());
 	auto const new_node_index = push_node(current_profile.nodes, name, current_node);
-	add_child(current_profile.nodes, current_node, new_node_index);
+	add_child(current_profile.nodes, current_node, current_insertion_point, new_node_index);
 	current_node = new_node_index;
+	current_insertion_point = new_node_index;
 }
 
 void Profiler::pop() noexcept
 {
+	assert(is_profiling());
 	current_profile.nodes[current_node].time_end = std::chrono::steady_clock::now().time_since_epoch();
 	current_node = current_profile.nodes[current_node].parent;
 }
@@ -207,3 +255,98 @@ std::vector<TaskProfile> Profiler::get_finished_profiles() noexcept
 	auto const g = std::lock_guard(finished_profiles_mutex);
 	return std::move(finished_profiles);
 }
+
+#if ENABLE_GLOBAL_PROFILER
+ProfileScope::ProfileScope(std::string_view name)
+	: ProfileScope(global_profiler::instance(), name)
+{}
+#endif
+
+ProfileScope::ProfileScope(Profiler & profiler_, std::string_view name)
+	: profiler(profiler_)
+{
+	profiler.push(name);
+}
+
+ProfileScope::~ProfileScope()
+{
+	profiler.pop();
+}
+
+#if ENABLE_GLOBAL_PROFILER
+ProfileScopeAsTask::ProfileScopeAsTask(std::string_view name)
+	: ProfileScopeAsTask(global_profiler::instance(), name)
+{}
+#endif
+
+ProfileScopeAsTask::ProfileScopeAsTask(Profiler & profiler_, std::string_view name)
+	: profiler(profiler_)
+{
+	profiler.start_main_task(name);
+}
+
+ProfileScopeAsTask::ProfileScopeAsTask(Profiler & profiler_, std::string_view name, std::string_view parent_id)
+	: profiler(profiler_)
+{
+	profiler.start_sub_task(name, parent_id);
+}
+
+ProfileScopeAsTask::~ProfileScopeAsTask()
+{
+	profiler.end_task();
+}
+
+#if ENABLE_GLOBAL_PROFILER
+namespace global_profiler
+{
+	Profiler profilers[16];
+	std::atomic<int> thread_count = 0;
+	thread_local int const this_thread_index = thread_count++;
+
+	Profiler & instance() noexcept
+	{
+		return profilers[this_thread_index];
+	}
+
+	void start_main_task(std::string_view name)
+	{
+		instance().start_main_task(name);
+	}
+
+	void start_sub_task(std::string_view name, std::string_view parent_id)
+	{
+		instance().start_sub_task(name, parent_id);
+	}
+
+	void end_task()
+	{
+		instance().end_task();
+	}
+
+	void push(std::string_view name)
+	{
+		instance().push(name);
+	}
+
+	void pop() noexcept
+	{
+		instance().pop();
+	}
+
+	auto is_profiling() noexcept -> bool
+	{
+		return instance().is_profiling();
+	}
+
+	auto current_task_id() noexcept -> std::string_view
+	{
+		return instance().current_task_id();
+	}
+
+	auto get_finished_profiles() noexcept -> std::vector<TaskProfile>
+	{
+		return instance().get_finished_profiles();
+	}
+
+} // namespace global_profiler
+#endif // ENABLE_GLOBAL_PROFILER
